@@ -1,1 +1,3 @@
-# controlling-counterfactual-harm-prediction-sets
+# Controlling Counterfactual Harm in Decision Support Systems Based on Prediction Sets
+
+Code for the paper "Controlling Counterfactual Harm in Decision Support Systems Based on Prediction Sets" coming soon...
