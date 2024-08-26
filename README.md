@@ -1,6 +1,6 @@
 # Controlling Counterfactual Harm in Decision Support Systems Based on Prediction Sets
 
-This repository contains the code used in the paper "Controlling Counterfactual Harm in Decision Support Systems Based on Prediction Sets", accepted at the ICML 2024 Workshop on Humans, Algorithmic Decision-Making and Society.
+This repository contains the code used in the paper ["Controlling Counterfactual Harm in Decision Support Systems Based on Prediction Sets"](https://arxiv.org/abs/2406.06671), accepted at the ICML 2024 Workshop on Humans, Algorithmic Decision-Making and Society.
 
 ## **Install Dependencies**
 
