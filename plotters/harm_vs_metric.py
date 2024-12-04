@@ -7,6 +7,7 @@ import config
 from plotters.post_process_results import *
 import os
 import numpy as np
+from collections import defaultdict
 
 """Produces the plots showing average accuracy against average counterfactual harm"""
 
@@ -74,17 +75,21 @@ MAP_ASSUM_ALPHA = {
         95:[0.01, 0.05],
     },
     'cI': {
-        80: [0.12, 0.14],
-        95: [0.15, 0.17],
+        80: [0.12, 0.14], #vanilla
+        # 80: [0.23], #saps
+        95: [0.15, 0.17], #vanilla
+        # 95: [0.23], #saps
         110: [.23, .24]
     }
 }
 AX_LABELS={
     'harm':r'Average Counterfactual Harm',
-    'accuracy':r'Average Accuracy'
+    'accuracy':r'Average Accuracy',
+    'set_size': r'Average Set Size',
+    'coverage': r'Empirical Coverage'
 }
 
-def harm_vs_metric_per_model(metric='accuracy',
+def harm_vs_acc_PS(metric='accuracy',
                    xaxis='accuracy', 
                    yaxis='harm', 
                    models=['DensNet161'],
@@ -95,15 +100,14 @@ def harm_vs_metric_per_model(metric='accuracy',
                    save=True,
                    ):
     """Plots and saves the real and predicted average accuracy
-    usign the ImageNet16H-PS data against the average counterfactual 
+    using the ImageNet16H-PS data against the average counterfactual 
     harm for a fixed alpha"""
     def confidence95(mean, se):
         low = mean - 1.96*se
         up = mean + 1.96*se
-        assert all(1.96*se < 0.01)
+        assert all(1.96*se < 0.02)
         return low, up
     
-
     cmap = plt.colormaps['Blues']
 
     min_val = defaultdict(lambda:1.)
@@ -210,6 +214,7 @@ def plot_colorbar():
     norm = mpl.colors.Normalize(0, 1)  # or vmin, vmax
     cbar = fig.colorbar(mpl.cm.ScalarMappable(norm, cmap), ax, pad=2)
     cbar.ax.tick_params(labelsize=48)
+    create_path(f"{config.ROOT_DIR}/{config.plot_path}")
     plt.savefig(f"{config.ROOT_DIR}/{config.plot_path}/colorbar_small.pdf", bbox_inches='tight')
 
 def plot_legend(models, pred_sets, assumptions, metric='accuracy'):
@@ -242,13 +247,13 @@ def plot_legend(models, pred_sets, assumptions, metric='accuracy'):
     plt.gcf().set_figheight(10)
     plt.gcf().set_figwidth(16)
 
-def subplots_harm_vs_acc(
+def subplots_harm_vs_metric(
                    metric='accuracy',
                    xaxis='accuracy', 
                    yaxis='harm', 
                    models=['DensNet161'],
                    pred_sets=False, 
-                   assumptions=['CF', 'cI'], 
+                   assum='CF', 
                    show_alpha=True,
                    alpha=.1,
                    noise_level=110,
@@ -259,7 +264,8 @@ def subplots_harm_vs_acc(
     def confidence95(mean, se):
         low = mean - 1.96*se
         up = mean + 1.96*se
-        assert all(1.96*se < 0.01)
+        # Fix upper-bound to 0.025 for SAPS avg set size and coverage
+        assert all(1.96*se < 0.02)
         return low, up
     
     def alpha_line_fn(xaxis, ax):
@@ -284,50 +290,55 @@ def subplots_harm_vs_acc(
             model_name=model_name,
             noise_level=noise_level,
             alpha=alpha,
+            assum=assum
         )
         
         results_dict = {}
-        for assum in assumptions:
-            for m in ['harm', metric]:
-                for val in ['mean', 'se']:
-                    results_dict[(assum, m, val)] = harm_metrics_lamda_freq.loc[assum][f"{m}_{val}"].values
+        for m in ['harm', metric]:
+            for val in ['mean', 'se']:
+                results_dict[(assum, m, val)] = harm_metrics_lamda_freq.loc[assum][f"{m}_{val}"].values
         
         if metric == 'harm':
-            for assum in assumptions:
-                results_dict[(assum, 'lambda', 'mean')] = harm_metrics_lamda_freq.loc[assum].index.to_numpy()
-                results_dict[(assum, 'lambda', 'se')] = np.zeros_like(results_dict[(assum, 'lambda', 'mean')])
+            results_dict[(assum, 'lambda', 'mean')] = harm_metrics_lamda_freq.loc[assum].index.to_numpy()
+            results_dict[(assum, 'lambda', 'se')] = np.zeros_like(results_dict[(assum, 'lambda', 'mean')])
 
-        for assum in assumptions :
-            sc = ax[i].scatter(
-                x=results_dict[(assum, xaxis, 'mean')],
-                y=results_dict[(assum, yaxis, 'mean')],
-                c=harm_metrics_lamda_freq.loc[assum]['run'].values/config.N_RUNS,
-                marker='o',
-                s=200,
-                zorder=i,
-                cmap=cmap,
-                vmin=0, 
-                vmax=1.,
-                label=model_name
-            )
+        if yaxis == 'accuracy':
+            c = harm_metrics_lamda_freq.loc[assum]['run'].values/config.N_RUNS
+            s = 200
+        else:
+            c = [.8] * len(results_dict[(assum, xaxis, 'mean')])
+            s = 80        
+        sc = ax[i].scatter(
+            x=results_dict[(assum, xaxis, 'mean')],
+            y=results_dict[(assum, yaxis, 'mean')],
+            c=c,
+            marker='o',
+            s=s,
+            zorder=i,
+            cmap=cmap,
+            vmin=0, 
+            vmax=1.,
+            label=model_name
+        )
+        
+        y_low, y_up = confidence95(results_dict[(assum, yaxis, 'mean')], results_dict[(assum, yaxis, 'se')])
+        x_low, x_up = confidence95(results_dict[(assum, xaxis, 'mean')], results_dict[(assum, xaxis, 'se')])
+        ax[i].fill_betweenx(
+            y=results_dict[(assum, yaxis, 'mean')], 
+            x1=x_low,
+            x2=x_up,
+            color='darkgrey',
+            alpha=.1, 
+            zorder=i + 6)
+        ax[i].fill_between(
+            x=results_dict[(assum, xaxis, 'mean')], 
+            y1=y_low,
+            y2=y_up, 
+            alpha=.1, 
+            color='darkgrey', 
+            zorder=i + 7)
 
-            y_low, y_up = confidence95(results_dict[(assum, yaxis, 'mean')], results_dict[(assum, yaxis, 'se')])
-            x_low, x_up = confidence95(results_dict[(assum, xaxis, 'mean')], results_dict[(assum, xaxis, 'se')])
-            ax[i].fill_betweenx(
-                y=results_dict[(assum, yaxis, 'mean')], 
-                x1=x_low,
-                x2=x_up,
-                color='darkgrey',
-                alpha=.1, 
-                zorder=i + 6)
-            ax[i].fill_between(
-                x=results_dict[(assum, xaxis, 'mean')], 
-                y1=y_low,
-                y2=y_up, 
-                alpha=.1, 
-                color='darkgrey', 
-                zorder=i + 7)
-
+        if yaxis == 'accuracy':
             for axis in [xaxis, yaxis]:
                 min_cur = min(results_dict[((assum, axis, 'mean'))])
                 min_val[axis, i] = min(min_cur, min_val[axis])
@@ -335,34 +346,34 @@ def subplots_harm_vs_acc(
                 max_cur = max(results_dict[((assum, axis, 'mean'))])
                 max_val[axis, i] = max(max_cur, max_val[axis])
             
-            ax[i].spines['right'].set_visible(False)
-            ax[i].spines['top'].set_visible(False)
+        ax[i].spines['right'].set_visible(False)
+        ax[i].spines['top'].set_visible(False)
 
-            leg = ax[i].legend(
-                frameon=False,
-                loc='upper right'
-                )
-            leg.legend_handles[0].set_visible(False)
-           
-    
-            if show_alpha:
-                alpha_plotter = alpha_line_fn(xaxis=xaxis, ax=ax[i])
-                if i < 4:
-                    ymin = -0.5
-                else:
-                    ymin = 0
-                alpha_plotter(
-                    alpha, 
-                    ymin=ymin,
-                    ls='--', 
-                    color='black', 
-                    zorder=35,
-                    clip_on=False)
-                if i == 0:
-                    # To fix the height of annotation change the + 0.04 to another value. 
-                    ax[i].text(alpha, max_val[metric, i] + 0.04, f"{alpha}", ha='center', va='top', color='black', rotation=0, fontsize=48)
-    
-    
+        leg = ax[i].legend(
+            frameon=False,
+            loc='upper right'
+            )
+        leg.legend_handles[0].set_visible(False)
+        
+        if show_alpha:
+            alpha_plotter = alpha_line_fn(xaxis=xaxis, ax=ax[i])
+            if i < 4:
+                ymin = -0.5
+            else:
+                ymin = 0
+            alpha_plotter(
+                alpha, 
+                ymin=ymin,
+                ls='--', 
+                color='black', 
+                zorder=35,
+                clip_on=False)
+            if i == 0:
+                # To fix the height of annotation change the + 0.04 to another value. 
+                # ax[i].text(alpha, max_val[metric, i] + 0.06, f"{alpha}", ha='center', va='top', color='black', rotation=0, fontsize=48)
+                # ax[i].text(alpha, ax[i].get_ylim()[-1] + (ax[i].get_ylim()[-1]-ax[i].get_ylim()[0])/3.5, f"{alpha}", ha='center', va='top', color='black', rotation=0, fontsize=48)
+                ax[i].text(alpha, ax[i].get_ylim()[-1] + (ax[i].get_ylim()[-1]-ax[i].get_ylim()[0])/3.5, f"{alpha}", ha='center', va='top', color='black', rotation=0, fontsize=48)
+
     fig.supylabel(AX_LABELS[yaxis],x=-0.02)
     fig.supxlabel(AX_LABELS[xaxis], y=-0.01)
     if assum=='cI':
@@ -372,7 +383,7 @@ def subplots_harm_vs_acc(
         path = f"{config.ROOT_DIR}/{config.plot_path}/{noise_level}/harm_vs_{metric}/"
         create_path(path)
         psets = "_PS" if pred_sets or 'Real' in models else ""
-        plt.savefig(f"{path}/all_{assumptions[0]}_alpha{alpha}_split{config.calibration_split}{psets}.pdf", bbox_inches='tight')
+        plt.savefig(f"{path}/all_{assum}_alpha{alpha}_split{config.calibration_split}{psets}.pdf", bbox_inches='tight')
         plt.clf()
     else:
         plt.show()
@@ -382,7 +393,10 @@ if __name__=="__main__":
     """Produces all plots showing the average accuracy against the 
     average counterfactual harm bound for different alpha values
     for reach noise level, each model and each monotonicity 
-    assumption (CF-->counterfactual, cI --> interventional)"""
+    assumption (CF-->counterfactual, cI --> interventional)
+    and also the plots showing the average set size and empirical 
+    coverage against the average counterfactual harm under the 
+    counterfactual monnotonicity assumption"""
     plot_colorbar()
     models = [
         r'VGG19',
@@ -394,13 +408,13 @@ if __name__=="__main__":
     for noise_level in [80, 95, 110]:
         for assum in ['CF', 'cI']:
             for alpha in MAP_ASSUM_ALPHA[assum][noise_level]:
-                subplots_harm_vs_acc(
+                subplots_harm_vs_metric(
                     yaxis='accuracy', 
                     xaxis='harm', 
                     metric='accuracy',
                     models=models,
                     pred_sets=False, 
-                    assumptions=[assum], 
+                    assum=assum, 
                     show_alpha=True,
                     alpha=alpha, 
                     noise_level=noise_level,
@@ -408,7 +422,7 @@ if __name__=="__main__":
                 )
                 if config.noise_level == 110 and assum == 'CF':
                     plot_legend(['Real', 'Predicted'], True, [assum])
-                    harm_vs_metric_per_model(
+                    harm_vs_acc_PS(
                         yaxis='accuracy', 
                         xaxis='harm', 
                         metric='accuracy',
@@ -416,9 +430,32 @@ if __name__=="__main__":
                         pred_sets=True, 
                         assumptions=[assum], 
                         show_alpha=True,
-                        show_legend=False,
                         alpha=alpha, 
                         save=True
                     )
 
-            
+        subplots_harm_vs_metric(
+            yaxis='set_size', 
+            xaxis='harm', 
+            metric='set_size',
+            models=models,
+            pred_sets=False, 
+            assum='CF', 
+            show_alpha=False,
+            alpha=alpha, 
+            noise_level=noise_level,
+            save=True
+        )
+        subplots_harm_vs_metric(
+            yaxis='coverage', 
+            xaxis='harm', 
+            metric='coverage',
+            models=models,
+            pred_sets=False, 
+            assum='CF', 
+            show_alpha=False,
+            alpha=alpha, 
+            noise_level=noise_level,
+            save=True
+            )
+        

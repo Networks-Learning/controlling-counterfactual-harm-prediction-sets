@@ -15,6 +15,8 @@ METRICS_MAPPER = {
     'harm': lambda x: np.array(list(map(int, x[1:-1].split(',')))),
     'accuracy': lambda x: np.array(list(map(int, x[1:-1].split(',')))), 
     'accuracy_mnl': lambda x: np.array(list(map(float, x[1:-1].split(',')))),
+    'set_size': lambda x:np.array(list(map(int, x[1:-1].split(',')))), 
+    'coverage': lambda x: np.array(list(map(lambda x: 1 if x=='True' else 0, x[1:-1].split(', '))))
     }
 METRICS_GROUPBY_KEYS = {
     'harm': ['assumption', 'lambda'],
@@ -30,19 +32,23 @@ METRICS_FILE_KEY = {
     }
 METRICS_KEYS = {
     'harm': ['run', 'assumption', 'lambda', 'harm'],
-    'metrics': ['run', 'lambda', 'accuracy'],
-    'metric_2_mnl': ['run', 'lambda',  'accuracy_mnl'],
-    'metric_2_PS_mnl': ['run', 'lambda',  'accuracy_mnl']
+    'metrics': ['run', 'lambda', 'set_size', 'coverage', 'accuracy'],
+    'metric_2_mnl': ['run', 'lambda', 'set_size', 'coverage', 'accuracy_mnl'],
+    'metric_2_PS_mnl': ['run', 'lambda',  'set_size', 'coverage', 'accuracy_mnl'],
 }
 METRICS_MEAN = {
     'harm': lambda x: x[0] / x[1] if len(x)==2 else x[2]/x[3] + x[0]/x[1],#(x[0]+x[2]) / (x[1]),
     'accuracy': lambda x: x[0] / x[1], 
     'accuracy_mnl': lambda x: np.mean(x), 
+    'set_size': lambda x: np.mean(x),
+    'coverage': lambda x: np.mean(x)
 }
 METRICS_AGG = {
     'harm': 'sum',
     'accuracy': 'sum', 
     'accuracy_mnl': lambda x: np.concatenate(x.values), 
+    'set_size': lambda x: np.concatenate(x.values),
+    'coverage': lambda x: np.concatenate(x.values)
 }
 def se_fn(x):
     if len(x) == 2:
@@ -54,7 +60,9 @@ def se_fn(x):
 METRICS_SE = {
     'harm': se_fn,
     'accuracy': se_fn, 
-    'accuracy_mnl': lambda x: np.std(x) / np.sqrt(len(x))
+    'accuracy_mnl': lambda x: np.std(x) / np.sqrt(len(x)),
+    'set_size': lambda x: np.std(x) / np.sqrt(len(x)),
+    'coverage': lambda x: np.std(x) / np.sqrt(len(x))
 }
 def compute_means_se(metric_name, base_path, file_postfix, pred_sets):
     """Computes mean and standard error of several metrics (harm/accuracy) per lambda value
@@ -68,15 +76,14 @@ def compute_means_se(metric_name, base_path, file_postfix, pred_sets):
 
     df = read_results(path=metric_path, keys=METRICS_KEYS[metric_name]).drop(columns=['run'])
    
-    # TODO: make this a for loop 
     if metric_name == 'harm':
         metric_key = 'harm'
-        map_dict = {'harm': METRICS_MAPPER['harm'] }
-        agg_dict = {'harm': METRICS_AGG['harm'] }
-        mean_dict = {'harm': METRICS_MEAN['harm'] }
-        se_dict = {'harm': METRICS_SE['harm'] }
+        map_dict = {'harm': METRICS_MAPPER['harm']}
+        agg_dict = {'harm': METRICS_AGG['harm']}
+        mean_dict = {'harm': METRICS_MEAN['harm']}
+        se_dict = {'harm': METRICS_SE['harm']}
     else:
-        metric_key = ['accuracy'] if pred_sets else  ['accuracy_mnl']
+        metric_key = ['accuracy'] if pred_sets else  ['accuracy_mnl', 'set_size', 'coverage']
         map_dict = {metric_n: METRICS_MAPPER[metric_n]for metric_n in metric_key}
         agg_dict = {metric_n: METRICS_AGG[metric_n]for metric_n in metric_key}
         mean_dict = {metric_n: METRICS_MEAN[metric_n]for metric_n in metric_key}
@@ -127,7 +134,8 @@ def metric_vs_harm(
         metric='metric_2', 
         model_name=config.model_name, 
         noise_level=config.noise_level, 
-        alpha=0.01
+        alpha=0.01,
+        assum='CF'
         ):
     """Returns results to be plotted"""
     m_mean_se_dict = {}
@@ -135,7 +143,7 @@ def metric_vs_harm(
         model_name = 'vgg19'
     for m in ['harm', metric]:
         m_mean_se_dict[m] = load_or_compute_metric(m, pred_sets=pred_sets, model_name=model_name, noise_level=noise_level)
-
+    m_mean_se_dict['harm'] = m_mean_se_dict['harm'].round({'lambda': config.lamda_dec})
     m_mean_se_dict['harm'].set_index(['assumption', 'lambda'], inplace=True)
     if 'harm' not in metric:
         m_mean_se_dict[metric].set_index('lambda', inplace=True)
@@ -149,15 +157,14 @@ def metric_vs_harm(
     else:
         harm_metrics = m_mean_se_dict['harm']
     
-
-    lambda_idx_cnt = find_lambda_idx(pred_sets=pred_sets, model_name=model_name, alpha=alpha)
-
-
+    lambda_idx_cnt = find_lambda_idx(pred_sets=pred_sets, model_name=model_name, alpha=alpha, assum=assum)
+    
     harm_metrics_lamda_freq = harm_metrics.join(lambda_idx_cnt, how='left', on=['assumption', 'lambda']).fillna(0)
+    print(harm_metrics_lamda_freq)
     return harm_metrics_lamda_freq
 
 
-def find_lambda_idx(pred_sets=True, model_name=config.model_name, alpha=config.alpha):
+def find_lambda_idx(pred_sets=True, model_name=config.model_name, alpha=config.alpha, assum='CF'):
     """Computes the intesity of the coloring of 
     each lambda value under each monotonicity assumption"""
     base_path = f"{config.ROOT_DIR}/{config.results_path}/{model_name}/noise{config.noise_level}"
@@ -170,8 +177,7 @@ def find_lambda_idx(pred_sets=True, model_name=config.model_name, alpha=config.a
 
     lamdas = read_results(lamdas_file_path, ['run', 'assumption', 'lambda','alpha'])
     # alpha here works as flag to know when asking results on CF monotonicity
-    # TODO: pass assum as parameter 
-    if alpha<=0.1:
+    if assum == 'CF':
         lamdas_for_alpha = lamdas[lamdas['alpha']==alpha].drop(columns=['alpha'])
 
         # Coloring for counterfactual monotonicity
@@ -184,7 +190,6 @@ def find_lambda_idx(pred_sets=True, model_name=config.model_name, alpha=config.a
     max_ctr = 0
     a_max = 0
     while a_prime <= alpha:
-        
         if alpha-a_prime< 1./121:
             a_prime+=0.01
             continue
@@ -195,6 +200,7 @@ def find_lambda_idx(pred_sets=True, model_name=config.model_name, alpha=config.a
         if lamdas_for_alpha_CF.empty:
             a_prime+=0.01
             continue
+        
         lamdas_for_alpha_cI = lamdas[ 
             (((lamdas['alpha']==np.round((alpha-a_prime), decimals=2))&(lamdas['assumption'] == 'cI')))].set_index(['lambda', 'run'])
         if lamdas_for_alpha_cI.empty:
@@ -202,6 +208,7 @@ def find_lambda_idx(pred_sets=True, model_name=config.model_name, alpha=config.a
             continue
        
         inters_idx = lamdas_for_alpha_CF.index.unique().intersection(lamdas_for_alpha_cI.index.unique())
+        
         if inters_idx.empty:
             a_prime+=0.01
             continue
@@ -213,6 +220,7 @@ def find_lambda_idx(pred_sets=True, model_name=config.model_name, alpha=config.a
             max_lam_per_iter = deepcopy(lam_per_iter)
             max_ctr = deepcopy(ctr_runs)
             a_max = a_prime
+        a_prime+=0.01
  
     assum_lam_n_run = [('cI', lam, 0) for lam in lamdas['lambda'].unique()]
     control_across_runs = pd.DataFrame(assum_lam_n_run,
@@ -225,4 +233,3 @@ def find_lambda_idx(pred_sets=True, model_name=config.model_name, alpha=config.a
         control_across_runs.loc[idx, 'run'] = row['run']
 
     return control_across_runs
-   
