@@ -2,7 +2,7 @@ import config
 from config import DATA_PATH
 import pandas as pd
 import os
-from utils import create_path
+from utils import create_path, call_saps
 from data.utils import stratify_images
 
 """Reads the datasets, stratify images and human 
@@ -29,7 +29,44 @@ def single_model(name):
         create_path(model_pred_path)
         
         model_predictions.to_csv(f"{model_pred_path}/{name}.csv")
+
+def single_model_saps(name):
+    """Create csv with all model outputs per image"""
+    # Get all model predictions
+    dtypes = {
+        'image_name':str,
+        'correct':int,
+        "noise_level":str
+        }
+    for l in LABELS:
+        dtypes[l] = float
+    raw_data = pd.read_csv(RAW_MODEL_DATA_PATH, dtype=dtypes)
+    raw_model_predictions = raw_data.loc[raw_data["model_name"] == name]
+
+    # Get all model predictions per noise level
+    for noise_level in [80, 95, 110]:
+        raw_model_pred_per_noise = raw_model_predictions.loc[raw_model_predictions["noise_level"] == str(noise_level)]
+        model_predictions = raw_model_pred_per_noise[["image_name", "knife","keyboard","elephant","bicycle","airplane","clock","oven","chair","bear","boat","cat","bottle","truck","car","bird","dog", "correct"]]
+        model_predictions.set_index("image_name", inplace=True)
+       
+        probs = model_predictions.drop(columns=['correct'])
+        max_scores = probs.max(axis=1)
     
+        for weight in config.SAPS_WEIGHTS:
+            saps_scores = call_saps(weight, probs, max_scores)
+            model_predictions[LABELS] = saps_scores    
+            # Save model output
+            model_pred_path = f"{DATA_PATH}/models/noise{noise_level}" 
+            
+            create_path(model_pred_path)
+            
+            model_predictions.to_csv(f"{model_pred_path}/{name}_saps_{weight}.csv")
+
+def all_models_saps():
+    """Split the model predictions per model and noise level"""
+    for model_name in ["alexnet", "vgg19", "densenet161", "googlenet", "resnet152"]:
+        single_model_saps(model_name)
+
 def all_models():
     """Split the model predictions per model and noise level"""
     for model_name in ["alexnet", "vgg19", "densenet161", "googlenet", "resnet152"]:
@@ -100,6 +137,55 @@ def human_success_pred_sets():
     # Save the data
     image_human_correct.to_csv(f"{path}/success_pred_set.csv")
     
+def model_sorted_predictions_saps(name):
+    """Create csv with with the model prediction and all
+    labels for each image sorted based on the model's output"""
+    dtypes = {
+        'image_name':str,
+        'model_pred':str,
+        "noise_level":str
+        }
+    for l in LABELS:
+        dtypes[l] = float
+
+    # Get all model info
+    raw_data = pd.read_csv(RAW_MODEL_DATA_PATH, dtype=dtypes)
+    raw_model_predictions = raw_data.loc[raw_data["model_name"] == name]
+
+    # Get all model outputs and predictions per noise level
+    for noise_level in [80, 95, 110]:
+        raw_model_out_pred_per_noise = raw_model_predictions.loc[raw_model_predictions["noise_level"] == str(noise_level)]
+        model_output_predictions = raw_model_out_pred_per_noise[["image_name"]+LABELS]
+        model_output_predictions.set_index("image_name", inplace=True)
+
+        probs = model_output_predictions
+        max_scores = probs.max(axis=1)
+        for weight in config.SAPS_WEIGHTS:
+            model_output_predictions_copy = model_output_predictions.copy()
+            saps_scores = call_saps(weight, probs, max_scores)
+            model_output_predictions_copy[LABELS] = saps_scores
+            # Sort labels per output value in ascending order
+            idx = model_output_predictions_copy[LABELS].values.argsort(axis=1)
+            # Reverse the order
+            sorted_labels = pd.DataFrame(
+                model_output_predictions_copy.columns.to_numpy()[idx[::,::]],
+                index=model_output_predictions_copy.index
+                )
+            model_output_predictions_copy[LABELS] = sorted_labels
+            # Rename former label columns with label rank
+            model_output_predictions_copy.rename(
+                {l: num+1 for num, l in enumerate(LABELS)},
+                axis='columns',
+                inplace=True
+                )
+
+            # Save model predictions
+            model_pred_path = f"{DATA_PATH}/models/noise{noise_level}" 
+            
+            create_path(model_pred_path)
+            
+            model_output_predictions_copy.to_csv(f"{model_pred_path}/{name}_sorted_saps_{weight}.csv")
+
 def model_sorted_predictions(name):
     """Create csv with with the model prediction and all
     labels for each image sorted based on the model's output"""
@@ -142,11 +228,15 @@ def model_sorted_predictions(name):
         create_path(model_pred_path)
         
         model_output_predictions.to_csv(f"{model_pred_path}/{name}_sorted.csv")
-   
+    
 def all_models_sorted():
     """Split and sort the model predictions per model and noise level"""
     for model_name in ["alexnet", "vgg19", "densenet161", "googlenet", "resnet152"]:
         model_sorted_predictions(model_name)
+def all_models_sorted_saps():
+    """Split and sort the model predictions per model and noise level"""
+    for model_name in ["alexnet", "vgg19", "densenet161", "googlenet", "resnet152"]:
+        model_sorted_predictions_saps(model_name)
 
 def mnl_human_ps(n_stratas_images=2, model='vgg19', noise_level=110):
     """For each image and prediction set compute the human success
@@ -228,7 +318,7 @@ def mnl_human_ps(n_stratas_images=2, model='vgg19', noise_level=110):
 
     strata_image_set_reward_prob.to_csv(f"{success_prob_path}/success_prob_stratas{n_stratas_images}_PS.csv", index=False)
 
-def mnl_human(n_stratas_images=1, model='vgg19'):
+def mnl_human(n_stratas_images=1, model='vgg19', model_saps=False, weight=config.SAPS_WEIGHTS[0]):
     """For each image and prediction set compute the human success
     probability using an MNL model per image difficulty level (image_strata)
     using the ImageNet16H dataset"""
@@ -248,7 +338,10 @@ def mnl_human(n_stratas_images=1, model='vgg19'):
         # Read labels sorted by the model output
         model_pred_path = f"{DATA_PATH}/models/noise{noise_level}" 
         
-        model_pred_sorted = pd.read_csv(f"{model_pred_path}/{model}_sorted.csv", dtype=str, index_col='image_name')
+        if not model_saps:
+            model_pred_sorted = pd.read_csv(f"{model_pred_path}/{model}_sorted.csv", dtype=str, index_col='image_name')
+        else:
+            model_pred_sorted = pd.read_csv(f"{model_pred_path}/{model}_sorted_saps_{weight}.csv", dtype=str, index_col='image_name')
    
         # Keep image_name, participant id, true label and prediction
         image_human_true_pred = raw_pred_per_noise[["image_name", "participant_id", "image_category","participant_classification"]].set_index("image_name")
@@ -297,21 +390,35 @@ def mnl_human(n_stratas_images=1, model='vgg19'):
             
         strata_image_set_reward_prob = pd.DataFrame(image_set_reward_prob, columns=['image_name', 'set', 'reward'])
 
-        strata_image_set_reward_prob.to_csv(f"{success_prob_path}/success_prob_stratas{n_stratas_images}.csv", index=False)
+        if not model_saps:
+            strata_image_set_reward_prob.to_csv(f"{success_prob_path}/success_prob_stratas{n_stratas_images}.csv", index=False)
+        else:
+            strata_image_set_reward_prob.to_csv(f"{success_prob_path}/success_prob_stratas{n_stratas_images}_saps_{weight}.csv", index=False)
 
 def all_mnl():
     """Compute the mixture of MNLs for each model and noise level"""
     for model_name in ["alexnet", "vgg19", "densenet161", "googlenet", "resnet152"]:
         for n_str in [2]:
             mnl_human(n_stratas_images=n_str, model=model_name)
-
+def all_mnl_saps():
+    """Compute the mixture of MNLs for each model and noise level"""
+    for model_name in ["alexnet", "vgg19", "densenet161", "googlenet", "resnet152"]:
+        for n_str in [2]:
+            for weight in config.SAPS_WEIGHTS:
+                mnl_human(n_stratas_images=n_str, model=model_name, model_saps=True, weight=weight)
 
 if __name__=="__main__":
+    print("Stratifying datasets per noise level...")
     dataset()
     all_models()
+    print("Preparing data using vanilla set-valued predictors...")
     human_successes()
     human_predictions()
     human_success_pred_sets()
     all_models_sorted()
     mnl_human_ps(n_stratas_images=2, model='vgg19', noise_level=110)
     all_mnl()
+    print("Preparing data using SAPS set-valued predictors (this takes a couple of minutes)...")
+    all_models_saps()
+    all_models_sorted_saps()
+    all_mnl_saps()

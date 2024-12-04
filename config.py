@@ -10,6 +10,7 @@ DATA_PATH = f"{ROOT_DIR}/data"
 N_RUNS = 50
 DEBUG = False
 N_LABELS = 16
+SAPS_WEIGHTS = [0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35]
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_name", type=str, \
@@ -35,6 +36,10 @@ parser.add_argument("--mnl_ps", choices=[True, False],\
                     type=bool, help="Set to True to run experiments\
                     with a mixture of MNLs using the ImageNet16H-PS data",
                     default=False)
+parser.add_argument("--score_type", choices=["vanilla", "SAPS"], \
+                    default="vanilla", type=str,
+                    help="Choose the label score function type (non-conformity score)\
+                    to select the labels in the prediction set.")
 
 args,unknown = parser.parse_known_args()
 
@@ -62,12 +67,27 @@ MNL_PS = args.mnl_ps
 # Initialize random generators
 entropy = 0x3034c61a9ae04ff8cb62ab8ec2c4b501
 numpy_rng = np.random.default_rng(entropy)
+tune_rng = np.random.default_rng(entropy)
+saps_rng = np.random.default_rng(entropy)
 
 # Fraction of the dataset to use as calibration set
 calibration_split = 0.1
 
+# Fraction of the dataset to use as a tuning set for SAPS
+tuning_split = 0.1
+
+# Name of score function (non-conformity score)
+score_type = args.score_type
+
+# Range of lambda values according to score type
+lambda_min = 0. 
+lambda_max = 1. if score_type == 'vanilla' else (1. + SAPS_WEIGHTS[-1]*(N_LABELS-1))
+
 # The granularity for the lambda grid
-lambda_step = 0.001
+lambda_step = (lambda_max - lambda_min) / 1000
+
+# Decimals to round up spurious lambda values due to np.arange
+lamda_dec = 3 if score_type == 'vanilla' else 5
 
 # Set up paths for results and plots
 # Path to store results

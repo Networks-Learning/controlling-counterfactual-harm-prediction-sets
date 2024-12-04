@@ -20,14 +20,15 @@ human = pd.read_csv(f"{config.DATA_PATH}/users/noise{config.noise_level}/success
 model = pd.read_csv(f"{config.DATA_PATH}/models/noise{config.noise_level}/{config.model_name}.csv", index_col='image_name')
 
 # Harm module
-cf_harm = CounterfactualHarm(model, human, x_y)
+cf_harm = CounterfactualHarm(model, human, x_y, score_type=config.score_type)
 
 # Calibration set size
 cal_size = int(len(x_y) * config.calibration_split)
 
 # Create different generators for each run
 generators = config.numpy_rng.spawn(config.N_RUNS)
-    
+tune_generators = config.tune_rng.spawn(config.N_RUNS)
+
 # Keep controlling lamdas per run
 lamdas_per_run = []
 
@@ -35,10 +36,17 @@ for run in tqdm(range(config.N_RUNS)):
     
     # Get random generator for the current run
     config.numpy_rng = generators[run]
+    config.tune_rng = tune_generators[run]
 
     # Sample calibration set
     calibration_set = x_y.sample(n=cal_size, random_state=config.numpy_rng)
-    
+
+    # Sample the tuning set in case of SAPS
+    if config.score_type != 'vanilla':
+        tuning_size = int(len(x_y) * config.tuning_split)
+        tune_set = x_y.drop(calibration_set.index).sample(n=tuning_size, random_state=config.tune_rng)
+        cf_harm.tune_saps(tune_set, run)
+        
     if config.mode == 'control':
         # Set up calibration set for harm control
         cf_harm.set_data_set(calibration_set)
@@ -48,6 +56,8 @@ for run in tqdm(range(config.N_RUNS)):
     else:    
         # Sample the test set 
         test_set = x_y.drop(calibration_set.index)
+        if config.score_type == 'SAPS':
+            test_set = test_set.drop(tune_set.index)
 
         # Set up the test set
         cf_harm.set_data_set(test_set)
