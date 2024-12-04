@@ -1,6 +1,6 @@
 # Controlling Counterfactual Harm in Decision Support Systems Based on Prediction Sets
 
-This repository contains the code used in the paper "Controlling Counterfactual Harm in Decision Support Systems Based on Prediction Sets", accepted at the ICML 2024 Workshop on Humans, Algorithmic Decision-Making and Society.
+This repository contains the code used in the paper ["Controlling Counterfactual Harm in Decision Support Systems Based on Prediction Sets"](https://arxiv.org/abs/2406.06671), accepted at NeurIPS 2024.
 
 ## **Install Dependencies**
 
@@ -74,10 +74,10 @@ All plots will be saved under the folder `plots`.
 If you use parts of the code/data in this repository for your own research purposes, please consider citing:
 
 ```
-@article{straitouri2024controlling,
+@inproceedings{straitouri2024controlling,
   title={Controlling Counterfactual Harm in Decision Support Systems Based on Prediction Sets},
   author={Straitouri, Eleni and Thejaswi, Suhas and Rodriguez, Manuel Gomez},
-  journal={arXiv preprint arXiv:2406.06671},
+  booktitle={Advances on Neural Information Processing Systems},
   year={2024}
 }
 
